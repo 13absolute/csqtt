@@ -27,6 +27,7 @@ class TunVpnService : VpnService() {
     private var sendJob: Job? = null
     private var activeClientIp: String? = null
     private var activeDns: String? = null
+    private var activeBypassLan: Boolean? = null
     private var recoveryAttempts = 0
     private var stopRequested = false
     @Volatile
@@ -82,6 +83,8 @@ class TunVpnService : VpnService() {
     private suspend fun startVpn(clientIp: String, dns: String, forceRebuild: Boolean) {
         vpnMutex.withLock {
         try {
+            val settingsStore = SettingsStore(applicationContext)
+            val bypassLan = settingsStore.bypassLan.first()
             val existing = synchronized(interfaceLock) {
                 vpnInterface?.takeIf {
                     TunRecoveryPolicy.shouldReuse(
@@ -93,7 +96,7 @@ class TunVpnService : VpnService() {
                         activeDns = activeDns,
                         requestedClientIp = clientIp,
                         requestedDns = dns,
-                    )
+                    ) && activeBypassLan == bypassLan
                 }
             }
             if (existing != null) {
@@ -106,7 +109,6 @@ class TunVpnService : VpnService() {
                 return
             }
 
-            val settingsStore = SettingsStore(applicationContext)
             val savedExcluded = settingsStore.excludedApps.first()
             val isWhitelist = settingsStore.isWhitelist.first()
             val userSelected = savedExcluded.split(",").filter { it.isNotEmpty() }.toSet()
@@ -120,7 +122,7 @@ class TunVpnService : VpnService() {
                 .setSession("CSQTT")
                 .setMtu(CsqttConstants.Vpn.DEFAULT_MTU)
                 .addAddress(clientIp, 32)
-                .addRoute("0.0.0.0", 0)
+            BypassLanPolicy.applyRoutes(builder, bypassLan)
 
             var validDnsServers = 0
             dns.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { dnsServer ->
@@ -194,6 +196,7 @@ class TunVpnService : VpnService() {
                     tunFd = pfd.fd
                     activeClientIp = clientIp
                     activeDns = dns
+                    activeBypassLan = bypassLan
                     true
                 }
             }
@@ -300,6 +303,7 @@ class TunVpnService : VpnService() {
             tunFd = -1
             activeClientIp = null
             activeDns = null
+            activeBypassLan = null
         }
         TunnelManager.onVpnInterfaceStopped()
         Log.d(TAG, "VPN interface closed")

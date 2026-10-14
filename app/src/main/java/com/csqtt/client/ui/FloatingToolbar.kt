@@ -58,8 +58,10 @@ fun FloatingToolbar(
         initialValue = CsqttConstants.VkAuth.MODE_CALLS,
     )
     val tunnelRunning by TunnelManager.running.collectAsStateWithLifecycle()
+    val bypassLan by settingsStore.bypassLan.collectAsStateWithLifecycle(initialValue = false)
     var isExpanded by rememberSaveable { mutableStateOf(false) }
     var showAutoPauseInfo by rememberSaveable { mutableStateOf(false) }
+    var showBypassLanInfo by rememberSaveable { mutableStateOf(false) }
     var showExtraWorkersInfo by rememberSaveable { mutableStateOf(false) }
 
     IconButton(
@@ -195,6 +197,16 @@ fun FloatingToolbar(
                         infoContentDescription = "Как работает автопауза при Wi-Fi",
                     )
 
+                    CsqttSettingRow(
+                        title = "Обход локальной сети (LAN)",
+                        checked = bypassLan,
+                        onCheckedChange = { enabled ->
+                            scope.launch { settingsStore.saveBypassLan(enabled) }
+                        },
+                        onInfoClick = { showBypassLanInfo = true },
+                        infoContentDescription = "Как работает обход локальной сети",
+                    )
+
                     if (vkAuthMode != CsqttConstants.VkAuth.MODE_AUTO_JS) {
                         CsqttSettingRow(
                             title = "Экстра потоки",
@@ -214,6 +226,9 @@ fun FloatingToolbar(
 
     if (showAutoPauseInfo) {
         WifiAutoPauseInfoDialog(onDismiss = { showAutoPauseInfo = false })
+    }
+    if (showBypassLanInfo) {
+        BypassLanInfoDialog(onDismiss = { showBypassLanInfo = false })
     }
     if (showExtraWorkersInfo) {
         ExtraWorkersInfoDialog(onDismiss = { showExtraWorkersInfo = false })

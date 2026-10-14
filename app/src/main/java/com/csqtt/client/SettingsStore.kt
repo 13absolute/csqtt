@@ -133,6 +133,7 @@ class SettingsStore(context: Context) {
         private val BATTERY_OPTIMIZATION_PROMPT_HANDLED =
             booleanPreferencesKey("battery_optimization_prompt_handled")
         private val AUTO_PAUSE_ON_WIFI = booleanPreferencesKey("auto_pause_on_wifi")
+        private val BYPASS_LAN = booleanPreferencesKey("bypass_lan")
 
         private val THEME_MODE = stringPreferencesKey("theme_mode") 
         private val IS_DYNAMIC_COLOR = booleanPreferencesKey("is_dynamic_color")
@@ -210,17 +211,6 @@ class SettingsStore(context: Context) {
                 migrateConnectionPasswordsToLocalStorage()
                 migrateSecretsToKeystore()
                 migrateLegacyWhitelistMode()
-            }
-        }
-        if (uiCacheStarted.compareAndSet(false, true)) {
-            CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-                launch { vkHashMode.collect { cachedVkHashMode = it } }
-                launch { vkAccessToken.collect { cachedVkAccessToken = it } }
-                launch { obfsMode.collect { cachedObfsMode = it } }
-                launch { turnTransport.collect { cachedTurnTransport = it } }
-                launch { csqttLinkMode.collect { cachedCsqttLinkMode = it } }
-                launch { workersPerHash.collect { cachedWorkersPerHash = it } }
-                launch { extraWorkers.collect { cachedExtraWorkers = it } }
             }
         }
     }
@@ -440,6 +430,9 @@ class SettingsStore(context: Context) {
     val autoPauseOnWifi: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[AUTO_PAUSE_ON_WIFI] ?: false
     }
+    val bypassLan: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[BYPASS_LAN] ?: false
+    }
     suspend fun isBatteryOptimizationPromptHandled(): Boolean =
         dataStore.data.first()[BATTERY_OPTIMIZATION_PROMPT_HANDLED] ?: false
 
@@ -473,6 +466,27 @@ class SettingsStore(context: Context) {
     val updateCheckIntervalHours: Flow<Int> = dataStore.data.map { it[UPDATE_CHECK_INTERVAL_HOURS] ?: 24 }
     val updatePostponeUntil: Flow<Long> = dataStore.data.map { it[UPDATE_POSTPONE_UNTIL] ?: 0L }
     val updatePostponeVersion: Flow<String> = dataStore.data.map { it[UPDATE_POSTPONE_VERSION] ?: "" }
+
+    init {
+        if (uiCacheStarted.compareAndSet(false, true)) {
+            val hashModeFlow = vkHashMode
+            val tokenFlow = vkAccessToken
+            val obfsFlow = obfsMode
+            val turnFlow = turnTransport
+            val linkModeFlow = csqttLinkMode
+            val workersFlow = workersPerHash
+            val extraWorkersFlow = extraWorkers
+            CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+                launch { hashModeFlow.collect { cachedVkHashMode = it } }
+                launch { tokenFlow.collect { cachedVkAccessToken = it } }
+                launch { obfsFlow.collect { cachedObfsMode = it } }
+                launch { turnFlow.collect { cachedTurnTransport = it } }
+                launch { linkModeFlow.collect { cachedCsqttLinkMode = it } }
+                launch { workersFlow.collect { cachedWorkersPerHash = it } }
+                launch { extraWorkersFlow.collect { cachedExtraWorkers = it } }
+            }
+        }
+    }
 
     suspend fun saveTunnelWasRunning(running: Boolean) {
         dataStore.edit { prefs ->
@@ -871,6 +885,12 @@ class SettingsStore(context: Context) {
     suspend fun saveAutoPauseOnWifi(enabled: Boolean) {
         dataStore.edit { prefs ->
             prefs[AUTO_PAUSE_ON_WIFI] = enabled
+        }
+    }
+
+    suspend fun saveBypassLan(enabled: Boolean) {
+        dataStore.edit { prefs ->
+            prefs[BYPASS_LAN] = enabled
         }
     }
 
