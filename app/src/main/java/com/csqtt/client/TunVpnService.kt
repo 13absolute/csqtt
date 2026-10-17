@@ -17,6 +17,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.csqtt.client.proxy.HotspotIpDetector
+import com.csqtt.client.proxy.LocalVpnProxyServer
+import com.csqtt.client.proxy.ProtectSocketServer
+import com.csqtt.client.proxy.VpnNetworkManager
+
 
 class TunVpnService : VpnService() {
     private val serviceJob = SupervisorJob()
@@ -30,6 +35,12 @@ class TunVpnService : VpnService() {
     private var activeBypassLan: Boolean? = null
     private var recoveryAttempts = 0
     private var stopRequested = false
+    private lateinit var vpnNetworkManager: VpnNetworkManager
+    private lateinit var proxyServer: LocalVpnProxyServer
+    private lateinit var hotspotIpDetector: HotspotIpDetector
+    private lateinit var protectSocketServer: ProtectSocketServer
+    private var proxyWatchJob: Job? = null
+
     @Volatile
     private var serviceDestroyed = false
 
@@ -48,6 +59,15 @@ class TunVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        vpnNetworkManager = VpnNetworkManager(this)
+        hotspotIpDetector = HotspotIpDetector(this)
+        proxyServer = LocalVpnProxyServer(vpnNetworkManager, hotspotIpDetector, listenPort = 1080)
+        protectSocketServer = ProtectSocketServer(this, this)
+        try {
+            protectSocketServer.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start ProtectSocketServer in onCreate", e)
+        }
         Log.d(TAG, "TunVpnService created")
     }
 
@@ -58,8 +78,20 @@ class TunVpnService : VpnService() {
         }
 
         when (intent.action) {
+            "INIT_PROTECT" -> {
+                try {
+                    protectSocketServer.start()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start ProtectSocketServer on INIT_PROTECT", e)
+                }
+            }
             "START" -> {
                 stopRequested = false
+                try {
+                    protectSocketServer.start()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start ProtectSocketServer on START", e)
+                }
                 val clientIp = intent.getStringExtra("client_ip") ?: "10.66.66.2"
                 val dns = intent.getStringExtra("dns") ?: "1.1.1.1"
                 val forceRebuild = intent.getBooleanExtra("force_rebuild", false)
@@ -118,7 +150,10 @@ class TunVpnService : VpnService() {
                 CsqttConstants.General.PACKAGE_VK_CALLS
             )
 
+            protectSocketServer.start()
+            vpnNetworkManager.startMonitoring()
             val builder = Builder()
+                .allowBypass()
                 .setSession("CSQTT")
                 .setMtu(CsqttConstants.Vpn.DEFAULT_MTU)
                 .addAddress(clientIp, 32)
@@ -143,7 +178,8 @@ class TunVpnService : VpnService() {
                     .filter { pkg -> 
                         pkg !in transportPackages && isPackageInstalled(pkg) 
                     }
-                    .toSet()
+                    .toMutableSet()
+                installedIncluded.add(applicationContext.packageName)
                 if (installedIncluded.isEmpty()) {
                     failVpn("Whitelist пуст: выберите хотя бы одно установленное приложение")
                     return
@@ -163,20 +199,13 @@ class TunVpnService : VpnService() {
                     }
                 }
             } else {
-                try {
-                    builder.addDisallowedApplication(applicationContext.packageName)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Unable to exclude CSQTT UID from its VPN", e)
-                    failVpn("Android не разрешил исключить CSQTT из собственного VPN")
-                    return
-                }
                 val excluded = transportPackages.toMutableSet()
                 excluded.addAll(userSelected)
                 excluded
                     .filter { it != applicationContext.packageName && isPackageInstalled(it) }
                     .forEach { pkg ->
-                    try { builder.addDisallowedApplication(pkg) } catch (_: Exception) {}
-                }
+                        try { builder.addDisallowedApplication(pkg) } catch (_: Exception) {}
+                    }
             }
 
             val pfd = builder.establish()
@@ -210,6 +239,17 @@ class TunVpnService : VpnService() {
             }
             Log.d(TAG, "VPN interface established: IP=$clientIp DNS=$dns fd=$tunFd")
 
+            vpnNetworkManager.notifyVpnEstablished()
+            proxyWatchJob?.cancel()
+            proxyWatchJob = serviceScope.launch {
+                settingsStore.hotspotProxyEnabled.collect { enabled ->
+                    if (enabled) {
+                        proxyServer.start()
+                    } else {
+                        proxyServer.stop()
+                    }
+                }
+            }
             sendTunFd(pfd, dns)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN: ${e.message}", e)
@@ -291,6 +331,18 @@ class TunVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        proxyWatchJob?.cancel()
+        proxyWatchJob = null
+        if (::protectSocketServer.isInitialized) {
+            protectSocketServer.stop()
+        }
+        if (::proxyServer.isInitialized) {
+            proxyServer.stop()
+        }
+        if (::vpnNetworkManager.isInitialized) {
+            vpnNetworkManager.stopMonitoring()
+        }
+
         sendJob?.cancel()
         sendJob = null
         synchronized(interfaceLock) {

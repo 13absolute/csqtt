@@ -141,8 +141,6 @@ internal fun SettingsTabContent(
     var showAutoJsRiskDialog by remember { mutableStateOf(false) }
     var showTcpTransportRiskDialog by remember { mutableStateOf(false) }
     var showWorkersInfoDialog by rememberSaveable { mutableStateOf(false) }
-    val bypassLan by settingsStore.bypassLan.collectAsStateWithLifecycle(initialValue = false)
-    var showBypassLanInfoDialog by rememberSaveable { mutableStateOf(false) }
     var pendingAutoJsSelection by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pendingTcpTransportSelection by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showRequiredFieldErrors by rememberSaveable(activeProfile) { mutableStateOf(false) }
@@ -801,23 +799,6 @@ internal fun SettingsTabContent(
                     onInfo = { showWorkersInfoDialog = true },
                 )
 
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                )
-
-                CsqttSettingRow(
-                    title = "Обход локальной сети (LAN)",
-                    description = "Прямой доступ к хотспоту и домашней сети",
-                    checked = bypassLan,
-                    enabled = !tunnelRunning,
-                    onCheckedChange = { enabled ->
-                        scope.launch { settingsStore.saveBypassLan(enabled) }
-                    },
-                    onInfoClick = { showBypassLanInfoDialog = true },
-                    infoContentDescription = "Информация об обходе локальной сети",
-                )
-
                 AnimatedVisibility(
                     visible = vkAuthMode == CsqttConstants.VkAuth.MODE_CAPTCHA,
                     enter = fadeIn() + expandVertically(),
@@ -962,10 +943,6 @@ internal fun SettingsTabContent(
                     isError = authorizationRequiredError,
                     onClick = { showSecretsDialog = true },
                 )
-            }
-
-            if (showBypassLanInfoDialog) {
-                BypassLanInfoDialog(onDismiss = { showBypassLanInfoDialog = false })
             }
 
             if (showObfsGeneralDialog) {
